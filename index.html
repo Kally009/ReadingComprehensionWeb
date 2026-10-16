@@ -45,10 +45,32 @@ const raw=r=>scores(r).reduce((x,y)=>x+y,0);
 const pct=r=>{const s=scores(r);return s.length?Math.round(100*raw(r)/s.length):0};
 const fd=t=>new Date(t).toLocaleString([], {dateStyle:'medium',timeStyle:'short'});
 
+/* ===== PROTOTYPE MODE: no real login, data saved in this browser only, AI is simulated ===== */
+const store=(()=>{let m={};try{const s=localStorage.getItem('rw');if(s)m=JSON.parse(s)}catch(e){}return m})();
+const persist=()=>{try{localStorage.setItem('rw',JSON.stringify(store))}catch(e){}};
+const subs=[],col=n=>store[n]=store[n]||{},cl=d=>JSON.parse(JSON.stringify(d));
+const snap=n=>({docs:Object.entries(col(n)).map(([id,v])=>({id,exists:true,data:()=>v}))});
+const notify=n=>subs.filter(s=>s.n===n).forEach(s=>s.f(snap(n)));
+db={doc(p){const[n,id]=p.split('/');return{async get(){const v=col(n)[id];return{exists:!!v,id,data:()=>v}},async set(d){col(n)[id]=cl(d);persist();notify(n)},async update(d){col(n)[id]={...col(n)[id],...cl(d)};persist();notify(n)},async delete(){delete col(n)[id];persist();notify(n)}}},
+ collection(n){return{onSnapshot(f){subs.push({n,f});f(snap(n))},async add(d){col(n)[uid()]=cl(d);persist();notify(n)}}}};
+sample={async json(p){
+ if(p.includes('Create 5 items')){const type=(p.match(/for a "(.*?)" reading/)||[])[1]||'';const txt=(p.split('Source text/topic:\n')[1]||'').split('\nFor "Sentence')[0];
+  if(type==='Sentence Application'){const w=[...new Set(txt.toLowerCase().match(/[a-z]{7,}/g)||[])].slice(0,5);return{items:(w.length?w:['example']).map(x=>({q:x,a:''}))}}
+  const ss=txt.split(/(?<=[.!?])\s+/).filter(x=>x.trim().length>25).slice(0,5);
+  return{items:(ss.length?ss:['Sample sentence for the demo.']).map(x=>({q:'According to the text, what is meant by: "'+x.split(' ').slice(0,8).join(' ')+'…"?',a:x.split(' ').filter(y=>y.length>5).slice(0,3).join(', ')}))}}
+ const items=JSON.parse(p.match(/Items: (\[.*\])\n/)[1]),ty=(p.match(/Activity type: (.*?)\./)||[])[1];
+ await new Promise(r=>setTimeout(r,700));
+ const sc=items.map(it=>{const s=norm(it.student);if(!s)return 0;if(ty==='Sentence Application')return s.split(' ').length>=4&&(' '+s+' ').includes(' '+norm(it.q)+' ')?1:0;const kw=String(it.expected||'').split(/[,;]/).map(norm).filter(Boolean);return kw.length?(kw.some(w=>s.includes(w))?1:0):(s.split(' ').length>=4?1:0)});
+ const n=sc.reduce((a,b)=>a+b,0),r=n/sc.length;
+ return{item_scores:sc,summary:'(Demo AI) The student answered '+n+' of '+sc.length+' items acceptably.',strengths:r>=.6?'Understands the main ideas and gives relevant details.':'Made an attempt on most items.',weaknesses:r<1?'Some answers miss key details from the text.':'None noted.',suggestions:r<.6?'Re-read the module together and practice finding key details.':'Give a more challenging follow-up activity.'}}};
+function seed(){
+ if(Object.keys(col('activities')).length)return;const t=Date.now();
+ store.activities={demo01:{title:'Demo: The Water Cycle',type:'module',passage:'Water moves in a never-ending cycle. The sun heats oceans and rivers, and the water evaporates into the air as vapor. High in the sky, the vapor cools and condenses into clouds. When the clouds become heavy, the water falls back to earth as rain, which flows into rivers and the sea again.',items:[{q:'What happens to water when the sun heats it?'},{q:'How do clouds form?'},{q:'Where does rain flow afterward?'}],at:t}};
+ store.keys={demo01:{a:['evaporate, vapor','cools, condenses','rivers, sea']}};
+ store.results={d1:{actId:'demo01',name:'Ana Reyes',answers:['It evaporates into vapor','The vapor cools and condenses','Into rivers and the sea'],at:t-86400000},d2:{actId:'demo01',name:'Ben Cruz',answers:['It gets hot','I do not know','To the sea'],at:t-7200000},d3:{actId:'demo01',name:'Carla Santos',answers:['The water evaporates','Vapor condenses into clouds','It flows to rivers'],at:t-3600000}};persist();
+}
 async function init(){
- const c=window.claude;
- if(c&&c.use){try{db=await c.use('db');user=await c.use('user');sample=await c.use('sample')}catch(e){}}
- if(user){try{isT=await user.canEdit()}catch(e){}}
+ seed();
  const id=new URLSearchParams(location.hash.slice(1)).get('a');
  if(id){return openStudent(id)}
  render();
@@ -64,17 +86,14 @@ function render(){({home,teacher,student,done})[page]()}
 /* ---------- HOME / LOGIN ---------- */
 function home(){
  app.innerHTML=`<div class="center"><h1>📖 ReadWise</h1><p class="mut">Reading activities with instant scoring and AI analysis</p></div>
- <div class="card"><h2>👩‍🏫 Teacher Login</h2><p class="mut">Log in with your claude.ai account to manage activities.</p>
- <button class="p" onclick="loginT()">Login as Teacher</button>${msg?`<p class="bad">${esc(msg)}</p>`:''}</div>
+ <div class="card"><h2>👩‍🏫 Teacher Login</h2><p class="mut">Prototype: no password needed. Sample data is already loaded.</p>
+ <button class="p" onclick="loginT()">Login as Teacher (demo)</button>${msg?`<p class="bad">${esc(msg)}</p>`:''}</div>
  <div class="card"><h2>🎒 Student</h2><p class="mut">Open the link from your teacher, or type the activity code.</p>
  <div class="link"><input id="code" placeholder="Activity code"><button class="p" onclick="openStudent($('#code').value.trim())">Start</button></div></div>`;
 }
-function loginT(){
- if(!db)msg='Please sign in to claude.ai first, then reopen this page.';
- else if(!isT)msg='This account is not the teacher (page owner/editor).';
- else{msg='';page='teacher';subscribe()}
- render();
-}
+function loginT(){isT=true;msg='';page='teacher';subscribe();render()}
+function toStudent(id){location.hash='a='+id;openStudent(id)}
+function backT(){history.replaceState(null,'',location.pathname);page='teacher';render()}
 
 /* ---------- TEACHER ---------- */
 function newDraft(){draft={title:'',type:'module',passage:'',items:[{q:'',a:''}]};saved=null}
@@ -94,7 +113,7 @@ function vList(){
  return h+acts.map(a=>{const rs=res.filter(r=>r.actId===a.id);return `<div class="card"><div class="row sp"><div><span class="tag">${T[a.type]}</span><h2>${esc(a.title)}</h2><div class="mut">${a.items.length} items · ${rs.length} submitted</div></div>
  <div><button onclick="selAct='${a.id}';tab='results';render()">View results</button> <button class="d" onclick="delAct('${a.id}')">Delete</button></div></div>${linkBox(a.id)}</div>`}).join('');
 }
-function linkBox(id){return `<div class="link"><input readonly value="${esc(link(id))}" onclick="this.select()"><button onclick="copy('${id}',this)">Copy</button></div><div class="mut">Code: <b>${id}</b> (students can also type this code on the home page)</div>`}
+function linkBox(id){return `<div class="link"><input readonly value="${esc(link(id))}" onclick="this.select()"><button onclick="copy('${id}',this)">Copy</button></div><div class="row sp"><span class="mut">Code: <b>${id}</b></span><button class="t" onclick="toStudent('${id}')">👀 Open as student</button></div>`}
 function copy(id,b){navigator.clipboard?.writeText(link(id)).then(()=>{b.textContent='Copied!'}).catch(()=>{});}
 async function delAct(id){if(!confirm('Delete this activity and its results?'))return;
  for(const r of res.filter(r=>r.actId===id))await db.doc('results/'+r.id).delete();
@@ -187,7 +206,7 @@ async function openStudent(id){
 }
 function student(){
  if(!cur){app.innerHTML=`<div class="card center"><h2>Activity not found</h2><p class="mut">Check the link or code with your teacher.</p><button onclick="history.replaceState(null,'',location.pathname);page='home';render()">Back</button></div>`;return}
- app.innerHTML=`<span class="tag">${T[cur.type]}</span><h1>${esc(cur.title)}</h1>
+ app.innerHTML=`${isT?'<button class="t" onclick="backT()">← Back to teacher</button><br>':''}<span class="tag">${T[cur.type]}</span><h1>${esc(cur.title)}</h1>
  <div class="card"><label style="margin-top:0">Your name</label><input id="sn" placeholder="Full name"></div>
  ${cur.passage?`<div class="card"><h2>${cur.type==='module'?'Read the module':'Reference text'}</h2><div class="pass">${esc(cur.passage)}</div></div>`:''}
  ${cur.items.map((it,i)=>`<div class="card"><b>${i+1}. ${cur.type==='sentence'?'Write a sentence using the word: <u>'+esc(it.q)+'</u>':esc(it.q)}</b>
@@ -202,7 +221,7 @@ async function submitS(){
  try{await db.collection('results').add({actId:cur.id,name,answers,at:Date.now()});page='done';render()}
  catch(e){$('#sb').disabled=false;alert('Could not submit: '+(e.message||e.code||'try again'))}
 }
-function done(){app.innerHTML=`<div class="card center"><h1>🎉 Submitted!</h1><p class="mut">Your teacher will review your answers. You can close this page.</p></div>`}
+function done(){app.innerHTML=`<div class="card center"><h1>🎉 Submitted!</h1><p class="mut">Your teacher will review your answers. You can close this page.</p>${isT?'<button class="p" onclick="backT()">Back to teacher dashboard</button>':''}</div>`}
 
 init();
 </script></body></html>
