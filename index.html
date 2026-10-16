@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ReadWise – Reading Activities</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--tx:#1d2433;--mut:#6b7285;--ac:#4f46e5;--acx:#fff;--bd:#e3e6ef;--ok:#16a34a;--bad:#dc2626;--soft:#eef0ff;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12141c;--card:#1c1f2b;--tx:#eceef5;--mut:#9aa1b5;--ac:#818cf8;--acx:#12141c;--bd:#2e3345;--soft:#262a3d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12141c;--card:#1c1f2b;--tx:#eceef5;--mut:#9aa1b5;--ac:#818cf8;--acx:#12141c;--bd:#2e3345;--soft:#262a3d;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+#app{max-width:880px;margin:0 auto;padding:16px}
+h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.2rem;margin:.2em 0 .6em}h3{font-size:1rem;margin:.6em 0 .3em}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin:12px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.sp{justify-content:space-between}
+.mut{color:var(--mut);font-size:.9rem}
+button{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:8px 14px;border-radius:10px;cursor:pointer}
+button.p{background:var(--ac);color:var(--acx);border-color:var(--ac);font-weight:600}
+button.t{border:none;background:none;color:var(--ac);padding:4px 8px}button.d{color:var(--bad)}
+button:disabled{opacity:.5;cursor:wait}
+input,textarea,select{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx)}
+textarea{min-height:80px;resize:vertical}label{display:block;font-weight:600;margin:10px 0 4px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.tabs button.on{background:var(--soft);border-color:var(--ac);color:var(--ac);font-weight:600}
+.tag{display:inline-block;background:var(--soft);color:var(--ac);border-radius:99px;padding:2px 10px;font-size:.8rem;font-weight:600}
+.item{border:1px dashed var(--bd);border-radius:10px;padding:10px;margin:8px 0}
+.bar{height:10px;background:var(--soft);border-radius:99px;overflow:hidden;min-width:90px}.bar i{display:block;height:100%;background:var(--ac)}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--bd);font-size:.92rem;white-space:nowrap}
+.ok{color:var(--ok);font-weight:700}.bad{color:var(--bad);font-weight:700}
+.pass{white-space:pre-wrap;background:var(--soft);border-radius:10px;padding:12px;margin:8px 0}
+.link{display:flex;gap:6px}.link input{flex:1}.center{text-align:center;padding:30px 0}
+</style></head><body><div id="app"><p class="mut">Loading…</p></div>
+<script>
+const $=s=>document.querySelector(s),app=$('#app');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Math.random().toString(36).slice(2,8)+Date.now().toString(36).slice(-3);
+const T={module:'Reading the Module',sentence:'Sentence Application',qa:'Question & Answer'};
+let db,user,sample,isT=false,page='home',tab='list',acts=[],res=[],keys={},draft=null,saved=null,selAct='',detail=null,cur=null,busy='',msg='';
+const link=id=>location.href.split('#')[0]+'#a='+id;
+const norm=s=>String(s||'').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim();
+const A=id=>acts.find(a=>a.id===id);
+function autoScore(a,r){const k=keys[a.id]||[];return a.items.map((it,i)=>{const s=norm(r.answers[i]);if(!s)return 0;
+ if(a.type==='sentence')return s.split(' ').length>=4&&(' '+s+' ').includes(' '+norm(it.q)+' ')?1:0;
+ const kw=String(k[i]||'').split(/[,;]/).map(norm).filter(Boolean);return kw.length&&kw.some(w=>s.includes(w))?1:0})}
+const scores=r=>{const a=A(r.actId);return a?(r.aiScores||autoScore(a,r)):[]};
+const raw=r=>scores(r).reduce((x,y)=>x+y,0);
+const pct=r=>{const s=scores(r);return s.length?Math.round(100*raw(r)/s.length):0};
+const fd=t=>new Date(t).toLocaleString([], {dateStyle:'medium',timeStyle:'short'});
+
+async function init(){
+ const c=window.claude;
+ if(c&&c.use){try{db=await c.use('db');user=await c.use('user');sample=await c.use('sample')}catch(e){}}
+ if(user){try{isT=await user.canEdit()}catch(e){}}
+ const id=new URLSearchParams(location.hash.slice(1)).get('a');
+ if(id){return openStudent(id)}
+ render();
+}
+function subscribe(){
+ const f=()=>{if(page==='teacher'&&!document.activeElement?.closest('.item,#form'))render()};
+ db.collection('activities').onSnapshot(s=>{acts=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.at-a.at);f()},()=>{});
+ db.collection('results').onSnapshot(s=>{res=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.at-a.at);f()},()=>{});
+ db.collection('keys').onSnapshot(s=>{keys={};s.docs.forEach(d=>keys[d.id]=d.data().a||[]);f()},()=>{});
+}
+function render(){({home,teacher,student,done})[page]()}
+
+/* ---------- HOME / LOGIN ---------- */
+function home(){
+ app.innerHTML=`<div class="center"><h1>📖 ReadWise</h1><p class="mut">Reading activities with instant scoring and AI analysis</p></div>
+ <div class="card"><h2>👩‍🏫 Teacher Login</h2><p class="mut">Log in with your claude.ai account to manage activities.</p>
+ <button class="p" onclick="loginT()">Login as Teacher</button>${msg?`<p class="bad">${esc(msg)}</p>`:''}</div>
+ <div class="card"><h2>🎒 Student</h2><p class="mut">Open the link from your teacher, or type the activity code.</p>
+ <div class="link"><input id="code" placeholder="Activity code"><button class="p" onclick="openStudent($('#code').value.trim())">Start</button></div></div>`;
+}
+function loginT(){
+ if(!db)msg='Please sign in to claude.ai first, then reopen this page.';
+ else if(!isT)msg='This account is not the teacher (page owner/editor).';
+ else{msg='';page='teacher';subscribe()}
+ render();
+}
+
+/* ---------- TEACHER ---------- */
+function newDraft(){draft={title:'',type:'module',passage:'',items:[{q:'',a:''}]};saved=null}
+function teacher(){
+ if(!draft)newDraft();
+ const tabs=[['list','Dashboard'],['create','+ Create Activity'],['results','Results'],['progress','Monitor Progress']];
+ app.innerHTML=`<div class="row sp"><h1>📖 Teacher Dashboard</h1><button class="t" onclick="page='home';render()">Logout</button></div>
+ <div class="tabs">${tabs.map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';detail=null;render()">${l}</button>`).join('')}</div>
+ ${{list:vList,create:vCreate,results:vResults,progress:vProgress}[tab]()}`;
+}
+function vList(){
+ const sv=saved&&A(saved);
+ let h=sv?`<div class="card" style="border-color:var(--ac)"><h2>✅ Activity ready – send this link to students</h2>${linkBox(saved)}</div>`:'';
+ if(!acts.length)return h+`<div class="card center mut">No activities yet. Click “+ Create Activity”.</div>`;
+ const n=res.length,av=n?Math.round(res.reduce((s,r)=>s+pct(r),0)/n):0;
+ h+=`<div class="row"><div class="card" style="flex:1"><div class="mut">Activities</div><h1>${acts.length}</h1></div><div class="card" style="flex:1"><div class="mut">Submissions</div><h1>${n}</h1></div><div class="card" style="flex:1"><div class="mut">Class average</div><h1>${av}%</h1></div></div>`;
+ return h+acts.map(a=>{const rs=res.filter(r=>r.actId===a.id);return `<div class="card"><div class="row sp"><div><span class="tag">${T[a.type]}</span><h2>${esc(a.title)}</h2><div class="mut">${a.items.length} items · ${rs.length} submitted</div></div>
+ <div><button onclick="selAct='${a.id}';tab='results';render()">View results</button> <button class="d" onclick="delAct('${a.id}')">Delete</button></div></div>${linkBox(a.id)}</div>`}).join('');
+}
+function linkBox(id){return `<div class="link"><input readonly value="${esc(link(id))}" onclick="this.select()"><button onclick="copy('${id}',this)">Copy</button></div><div class="mut">Code: <b>${id}</b> (students can also type this code on the home page)</div>`}
+function copy(id,b){navigator.clipboard?.writeText(link(id)).then(()=>{b.textContent='Copied!'}).catch(()=>{});}
+async function delAct(id){if(!confirm('Delete this activity and its results?'))return;
+ for(const r of res.filter(r=>r.actId===id))await db.doc('results/'+r.id).delete();
+ await db.doc('keys/'+id).delete();await db.doc('activities/'+id).delete()}
+
+const LBL={module:['Comprehension question','Expected answer (keywords, comma-separated)'],qa:['Question','Expected answer (keywords, comma-separated)'],sentence:['Target word','Meaning / note (optional)']};
+function vCreate(){
+ const d=draft,l=LBL[d.type];
+ return `<div class="card" id="form"><h2>Create Reading Activity</h2>
+ <label>Title</label><input value="${esc(d.title)}" oninput="draft.title=this.value" placeholder="e.g. Week 3 – The Water Cycle">
+ <label>Activity type</label><select onchange="draft.type=this.value;render()">${Object.entries(T).map(([k,v])=>`<option value="${k}" ${d.type===k?'selected':''}>${v}</option>`).join('')}</select>
+ <label>${d.type==='module'?'Module text (students will read this)':'Source text / topic (optional, helps AI generate items)'}</label>
+ <textarea oninput="draft.passage=this.value" style="min-height:130px">${esc(d.passage)}</textarea>
+ <h3>Items <span class="mut">— write them yourself or let AI draft them</span></h3>
+ ${d.items.map((it,i)=>`<div class="item"><label style="margin-top:0">${l[0]} ${i+1}</label><input value="${esc(it.q)}" oninput="draft.items[${i}].q=this.value">
+ <label>${l[1]}</label><input value="${esc(it.a)}" oninput="draft.items[${i}].a=this.value"><button class="t d" onclick="draft.items.splice(${i},1);render()">Remove</button></div>`).join('')}
+ <div class="row"><button onclick="draft.items.push({q:'',a:''});render()">+ Add item</button>
+ <button onclick="gen()" ${busy?'disabled':''}>${busy==='gen'?'Generating…':'✨ Generate items with AI'}</button></div>
+ ${msg?`<p class="bad">${esc(msg)}</p>`:''}
+ <hr style="border:0;border-top:1px solid var(--bd);margin:16px 0"><button class="p" onclick="save()">Save & Generate Link</button></div>`;
+}
+async function gen(){
+ if(!sample){msg='AI is not available here.';return render()}
+ if(!draft.passage.trim()&&!draft.title.trim()){msg='Add a title or source text first.';return render()}
+ busy='gen';msg='';render();
+ try{const j=await sample.json(`Create 5 items for a "${T[draft.type]}" reading activity for students.\nTitle: ${draft.title}\nSource text/topic:\n${draft.passage}\nFor "Sentence Application", each q is a vocabulary word from the text and a is its short meaning. Otherwise q is a question and a is the expected answer as a few comma-separated keywords.\nReturn ONLY JSON: {"items":[{"q":"","a":""}]}`);
+  draft.items=(j.items||[]).map(x=>({q:String(x.q||''),a:String(x.a||'')}))}catch(e){msg='AI could not generate items. '+(e.message||'')}
+ busy='';render();
+}
+async function save(){
+ const items=draft.items.filter(i=>i.q.trim());
+ if(!draft.title.trim()||!items.length){msg='Add a title and at least one item.';return render()}
+ if(draft.type==='module'&&!draft.passage.trim()){msg='Add the module text to read.';return render()}
+ const id=uid();
+ try{await db.doc('activities/'+id).set({title:draft.title.trim(),type:draft.type,passage:draft.passage,items:items.map(i=>({q:i.q.trim()})),at:Date.now()});
+  await db.doc('keys/'+id).set({a:items.map(i=>i.a.trim())});
+  saved=id;draft=null;msg='';tab='list';
+  if(!A(id))acts.unshift({id,title:'',type:'qa',items:[],at:Date.now()});}catch(e){msg='Save failed: '+(e.message||e.code)}
+ render();
+}
+function vResults(){
+ if(!acts.length)return `<div class="card center mut">No activities yet.</div>`;
+ if(!selAct||!A(selAct))selAct=acts[0].id;
+ const a=A(selAct),rs=res.filter(r=>r.actId===selAct);
+ if(detail){const r=res.find(x=>x.id===detail);if(r)return vDetail(r,a)}
+ return `<div class="card"><select onchange="selAct=this.value;render()">${acts.map(x=>`<option value="${x.id}" ${x.id===selAct?'selected':''}>${esc(x.title)}</option>`).join('')}</select>
+ <div class="row sp" style="margin-top:10px"><span class="mut">${rs.length} submission(s)</span><button onclick="analyzeAll()" ${busy?'disabled':''}>${busy==='all'?'Analyzing…':'✨ AI-analyze all'}</button></div>
+ ${rs.length?`<div class="tw"><table><tr><th>Student</th><th>Score</th><th>%</th><th>Submitted</th><th>AI</th><th></th></tr>${rs.map(r=>`<tr><td>${esc(r.name)}</td><td>${raw(r)}/${a.items.length}</td><td>${pct(r)}%</td><td>${fd(r.at)}</td><td>${r.ai?'✅':'—'}</td><td><button class="t" onclick="detail='${r.id}';render()">View</button></td></tr>`).join('')}</table></div>`:'<p class="mut">No submissions yet.</p>'}</div>`;
+}
+function vDetail(r,a){
+ const k=keys[a.id]||[],s=scores(r),ai=r.ai;
+ return `<div class="card"><button class="t" onclick="detail=null;render()">← Back</button><h2>${esc(r.name)} — ${raw(r)}/${a.items.length} (${pct(r)}%)</h2><div class="mut">${esc(a.title)} · ${fd(r.at)}</div>
+ ${a.items.map((it,i)=>`<div class="item"><b>${i+1}. ${esc(it.q)}</b> <span class="${s[i]?'ok':'bad'}">${s[i]?'✓':'✗'}</span><div>${esc(r.answers[i])||'<i class="mut">(blank)</i>'}</div>${k[i]?`<div class="mut">Expected: ${esc(k[i])}</div>`:''}</div>`).join('')}
+ <h3>🤖 AI Analysis</h3>${ai?`<div class="pass"><b>Summary:</b> ${esc(ai.summary)}\n<b>Strengths:</b> ${esc(ai.strengths)}\n<b>Needs work:</b> ${esc(ai.weaknesses)}\n<b>Suggestions:</b> ${esc(ai.suggestions)}</div>`:'<p class="mut">Not generated yet.</p>'}
+ <button class="p" onclick="analyze('${r.id}').then(render)" ${busy?'disabled':''}>${busy===r.id?'Analyzing…':ai?'Re-run AI analysis':'Run AI analysis'}</button>${msg?`<p class="bad">${esc(msg)}</p>`:''}</div>`;
+}
+async function analyze(id){
+ const r=res.find(x=>x.id===id),a=A(r.actId),k=keys[a.id]||[];
+ if(!sample){msg='AI is not available here.';return}
+ busy=id;msg='';render();
+ try{const j=await sample.json(`You assist a reading teacher. Activity type: ${T[a.type]}. ${a.passage?'Passage:\n'+a.passage+'\n':''}
+Items: ${JSON.stringify(a.items.map((it,i)=>({q:it.q,expected:k[i]||'',student:r.answers[i]||''})))}
+For "Sentence Application", q is a target word and the student wrote a sentence using it correctly or not. Grade each item 1 (correct/acceptable) or 0.
+Return ONLY JSON: {"item_scores":[1,0],"summary":"2-3 sentences on comprehension","strengths":"","weaknesses":"","suggestions":"next steps for the teacher"}`);
+  const sc=a.items.map((_,i)=>j.item_scores&&+j.item_scores[i]?1:0);
+  const ai={summary:String(j.summary||''),strengths:String(j.strengths||''),weaknesses:String(j.weaknesses||''),suggestions:String(j.suggestions||'')};
+  await db.doc('results/'+id).update({ai,aiScores:sc});r.ai=ai;r.aiScores=sc}catch(e){msg='AI analysis failed. '+(e.message||'')}
+ busy='';
+}
+async function analyzeAll(){busy='all';render();const keep=busy;
+ for(const r of res.filter(r=>r.actId===selAct&&!r.ai)){await analyze(r.id);busy='all'}
+ busy='';render()}
+function vProgress(){
+ if(!res.length)return `<div class="card center mut">No submissions yet.</div>`;
+ const by={};res.forEach(r=>{const k=norm(r.name);(by[k]=by[k]||{name:r.name,list:[]}).list.push(r)});
+ const rows=Object.values(by).map(s=>{const av=Math.round(s.list.reduce((x,r)=>x+pct(r),0)/s.list.length);const last=s.list[0];return {...s,av,last}}).sort((a,b)=>b.av-a.av);
+ return `<div class="card"><h2>Per student</h2><div class="tw"><table><tr><th>Student</th><th>Activities done</th><th>Average</th><th>Progress</th><th>Latest</th></tr>
+ ${rows.map(s=>`<tr><td>${esc(s.name)}</td><td>${s.list.length}/${acts.length}</td><td>${s.av}%</td><td><div class="bar"><i style="width:${s.av}%"></i></div></td><td>${pct(s.last)}%</td></tr>`).join('')}</table></div></div>
+ <div class="card"><h2>Per activity</h2><div class="tw"><table><tr><th>Activity</th><th>Submitted</th><th>Average</th><th></th></tr>
+ ${acts.map(a=>{const rs=res.filter(r=>r.actId===a.id),av=rs.length?Math.round(rs.reduce((x,r)=>x+pct(r),0)/rs.length):0;return `<tr><td>${esc(a.title)}</td><td>${rs.length}</td><td>${av}%</td><td><div class="bar"><i style="width:${av}%"></i></div></td></tr>`}).join('')}</table></div></div>`;
+}
+
+/* ---------- STUDENT ---------- */
+async function openStudent(id){
+ if(!id)return;page='student';cur=null;
+ app.innerHTML='<p class="mut">Loading activity…</p>';
+ if(!db){app.innerHTML=`<div class="card center"><h2>Please sign in to claude.ai</h2><p class="mut">Open this link while signed in, then try again.</p></div>`;return}
+ try{const d=await db.doc('activities/'+id).get();if(d.exists)cur={id,...d.data()}}catch(e){}
+ render();
+}
+function student(){
+ if(!cur){app.innerHTML=`<div class="card center"><h2>Activity not found</h2><p class="mut">Check the link or code with your teacher.</p><button onclick="history.replaceState(null,'',location.pathname);page='home';render()">Back</button></div>`;return}
+ app.innerHTML=`<span class="tag">${T[cur.type]}</span><h1>${esc(cur.title)}</h1>
+ <div class="card"><label style="margin-top:0">Your name</label><input id="sn" placeholder="Full name"></div>
+ ${cur.passage?`<div class="card"><h2>${cur.type==='module'?'Read the module':'Reference text'}</h2><div class="pass">${esc(cur.passage)}</div></div>`:''}
+ ${cur.items.map((it,i)=>`<div class="card"><b>${i+1}. ${cur.type==='sentence'?'Write a sentence using the word: <u>'+esc(it.q)+'</u>':esc(it.q)}</b>
+ <textarea class="ans" style="margin-top:8px" placeholder="Type your answer…"></textarea></div>`).join('')}
+ <button class="p" style="width:100%;padding:12px" onclick="submitS()" id="sb">Submit</button>`;
+}
+async function submitS(){
+ const name=$('#sn').value.trim();if(!name)return alert('Please enter your name.');
+ const answers=[...document.querySelectorAll('.ans')].map(t=>t.value.trim());
+ if(answers.some(x=>!x)&&!confirm('Some answers are blank. Submit anyway?'))return;
+ $('#sb').disabled=true;
+ try{await db.collection('results').add({actId:cur.id,name,answers,at:Date.now()});page='done';render()}
+ catch(e){$('#sb').disabled=false;alert('Could not submit: '+(e.message||e.code||'try again'))}
+}
+function done(){app.innerHTML=`<div class="card center"><h1>🎉 Submitted!</h1><p class="mut">Your teacher will review your answers. You can close this page.</p></div>`}
+
+init();
+</script></body></html>
